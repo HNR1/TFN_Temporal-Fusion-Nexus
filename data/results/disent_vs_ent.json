@@ -1,0 +1,140 @@
+{
+    "graft_loss": {
+      "disentangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.962,
+          "std": 0.0061
+        },
+        {
+          "period": "90_day",
+          "mean": 0.9648,
+          "std": 0.0106
+        },
+        {
+          "period": "180_day",
+          "mean": 0.9622,
+          "std": 0.0088
+        },
+        {
+          "period": "360_day",
+          "mean": 0.9496,
+          "std": 0.0121
+        }
+      ],
+      "entangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.9665,
+          "std": 0.0037
+        },
+        {
+          "period": "90_day",
+          "mean": 0.9687,
+          "std": 0.0062
+        },
+        {
+          "period": "180_day",
+          "mean": 0.9615,
+          "std": 0.0054
+        },
+        {
+          "period": "360_day",
+          "mean": 0.9552,
+          "std": 0.0071
+        }
+      ]
+    },
+    "graft_rejection": {
+      "disentangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.8439,
+          "std": 0.0116
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8471,
+          "std": 0.0125
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8488,
+          "std": 0.0102
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8235,
+          "std": 0.0136
+        }
+      ],
+      "entangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.8484,
+          "std": 0.0068
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8504,
+          "std": 0.0073
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8467,
+          "std": 0.0063
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8206,
+          "std": 0.0080
+        }
+      ]
+    },
+    "mortality": {
+      "disentangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.8601,
+          "std": 0.0095
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8587,
+          "std": 0.0113
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8514,
+          "std": 0.0127
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8387,
+          "std": 0.0116
+        }
+      ],
+      "entangled_model": [
+        {
+          "period": "30_day",
+          "mean": 0.8645,
+          "std": 0.0056
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8622,
+          "std": 0.0066
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8505,
+          "std": 0.0074
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8408,
+          "std": 0.0071
+        }
+      ]
+    }
+  }

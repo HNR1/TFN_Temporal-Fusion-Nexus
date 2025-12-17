@@ -1,0 +1,358 @@
+{
+  "prediction_tasks": {
+    "graft_loss": [
+      {
+        "feature": "Creatinine",
+        "importance": 0.129
+      },
+      {
+        "feature": "eGFR",
+        "importance": 0.083
+      },
+      {
+        "feature": "Tacrolimus",
+        "importance": 0.046
+      },
+      {
+        "feature": "Proteinuria",
+        "importance": 0.045
+      },
+      {
+        "feature": "Ciclosporin",
+        "importance": 0.042
+      },
+      {
+        "feature": "ACR",
+        "importance": 0.038
+      },
+      {
+        "feature": "Leukocyte",
+        "importance": 0.032
+      },
+      {
+        "feature": "Blood pressure",
+        "importance": 0.027
+      },
+      {
+        "feature": "crphp",
+        "importance": 0.026
+      },
+      {
+        "feature": "urine_volume",
+        "importance": 0.015
+      },
+      {
+        "feature": "bp_sys",
+        "importance": 0.024
+      },
+      {
+        "feature": "Methylprednisolon",
+        "importance": 0.013
+      },
+      {
+        "feature": "temperature",
+        "importance": 0.006
+      },
+      {
+        "feature": "diuresis_time",
+        "importance": 0.018
+      },
+      {
+        "feature": "hr",
+        "importance": 0.017
+      },
+      {
+        "feature": "weight",
+        "importance": 0.008
+      },
+      {
+        "feature": "mm_broad",
+        "importance": 0.012
+      },
+      {
+        "feature": "type_of_donation",
+        "importance": 0.012
+      },
+      {
+        "feature": "number_dialyses",
+        "importance": 0.014
+      },
+      {
+        "feature": "gender",
+        "importance": 0.008
+      },
+      {
+        "feature": "Notes embeddings",
+        "importance": 0.048
+      },
+      {
+        "feature": "donor_bloodgroup",
+        "importance": 0.006
+      },
+      {
+        "feature": "blood_group",
+        "importance": 0.005
+      },
+      {
+        "feature": "pirche_score",
+        "importance": 0.017
+      },
+      {
+        "feature": "underlying_disease",
+        "importance": 0.032
+      },
+      {
+        "feature": "Age",
+        "importance": 0.03
+      },
+      {
+        "feature": "age_donor",
+        "importance": 0.023
+      },
+      {
+        "feature": "cold_ischemia_time",
+        "importance": 0.013
+      },
+      {
+        "feature": "gender_donor",
+        "importance": 0.003
+      }
+    ],
+    "graft_rejection": [
+      {
+        "feature": "Creatinine",
+        "importance": 0.122
+      },
+      {
+        "feature": "Leukocyte",
+        "importance": 0.081
+      },
+      {
+        "feature": "Tacrolimus",
+        "importance": 0.071
+      },
+      {
+        "feature": "Ciclosporin",
+        "importance": 0.065
+      },
+      {
+        "feature": "eGFR",
+        "importance": 0.088
+      },
+      {
+        "feature": "C-reactive protein",
+        "importance": 0.042
+      },
+      {
+        "feature": "Methylprednisolon",
+        "importance": 0.042
+      },
+      {
+        "feature": "Proteinuria",
+        "importance": 0.036
+      },
+      {
+        "feature": "Heart rate",
+        "importance": 0.027
+      },
+      {
+        "feature": "mm_broad",
+        "importance": 0.024
+      },
+      {
+        "feature": "bp_dia",
+        "importance": 0.023
+      },
+      {
+        "feature": "bp_sys",
+        "importance": 0.021
+      },
+      {
+        "feature": "temperature",
+        "importance": 0.006
+      },
+      {
+        "feature": "urine_volume",
+        "importance": 0.011
+      },
+      {
+        "feature": "pirche_score",
+        "importance": 0.017
+      },
+      {
+        "feature": "acr",
+        "importance": 0.016
+      },
+      {
+        "feature": "type_of_donation",
+        "importance": 0.015
+      },
+      {
+        "feature": "diuresis_time",
+        "importance": 0.014
+      },
+      {
+        "feature": "weight",
+        "importance": 0.005
+      },
+      {
+        "feature": "Notes embeddings",
+        "importance": 0.07
+      },
+      {
+        "feature": "gender",
+        "importance": 0.008
+      },
+      {
+        "feature": "blood_group",
+        "importance": 0.005
+      },
+      {
+        "feature": "donor_bloodgroup",
+        "importance": 0.004
+      },
+      {
+        "feature": "number_dialyses",
+        "importance": 0.006
+      },
+      {
+        "feature": "underlying_disease",
+        "importance": 0.004
+      },
+      {
+        "feature": "Age",
+        "importance": 0.043
+      },
+      {
+        "feature": "age_donor",
+        "importance": 0.023
+      },
+      {
+        "feature": "cold_ischemia_time",
+        "importance": 0.014
+      },
+      {
+        "feature": "gender_donor",
+        "importance": 0.003
+      }
+    ],
+    "mortality": [
+      {
+        "feature": "Age",
+        "importance": 0.11
+      },
+      {
+        "feature": "Creatinine",
+        "importance": 0.083
+      },
+      {
+        "feature": "eGFR",
+        "importance": 0.068
+      },
+      {
+        "feature": "Leukocyte",
+        "importance": 0.050
+      },
+      {
+        "feature": "Heart rate",
+        "importance": 0.045
+      },
+      {
+        "feature": "Ciclosporin",
+        "importance": 0.035
+      },
+      {
+        "feature": "Blood pressure",
+        "importance": 0.030
+      },
+      {
+        "feature": "bp_dia",
+        "importance": 0.011
+      },
+      {
+        "feature": "Tacrolimus",
+        "importance": 0.025
+      },
+      {
+        "feature": "Proteinuria",
+        "importance": 0.022
+      },
+      {
+        "feature": "C-reactive protein",
+        "importance": 0.020
+      },
+      {
+        "feature": "Underlying disease",
+        "importance": 0.020
+      },
+      {
+        "feature": "Temperature",
+        "importance": 0.004
+      },
+      {
+        "feature": "weight",
+        "importance": 0.008
+      },
+      {
+        "feature": "Methylprednisolon",
+        "importance": 0.014
+      },
+      {
+        "feature": "urine_volume",
+        "importance": 0.009
+      },
+      {
+        "feature": "gender",
+        "importance": 0.012
+      },
+      {
+        "feature": "diuresis_time",
+        "importance": 0.010
+      },
+      {
+        "feature": "number_dialyses",
+        "importance": 0.010
+      },
+      {
+        "feature": "age_donor",
+        "importance": 0.009
+      },
+      {
+        "feature": "acr",
+        "importance": 0.017
+      },
+      {
+        "feature": "type_of_donation",
+        "importance": 0.006
+      },
+      {
+        "feature": "Notes embeddings",
+        "importance": 0.005
+      },
+      {
+        "feature": "donor_bloodgroup",
+        "importance": 0.004
+      },
+      {
+        "feature": "blood_group",
+        "importance": 0.004
+      },
+      {
+        "feature": "mm_broad",
+        "importance": 0.003
+      },
+      {
+        "feature": "gender_donor",
+        "importance": 0.002
+      },
+      {
+        "feature": "pirche_score",
+        "importance": 0.001
+      },
+      {
+        "feature": "cold_ischemia_time",
+        "importance": 0.001
+      }
+    ]
+  }
+}

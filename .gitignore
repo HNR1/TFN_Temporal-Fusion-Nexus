@@ -1,0 +1,6 @@
+data/v1/
+data/v2/
+*__pycache__
+.vscode
+.conda
+.venv

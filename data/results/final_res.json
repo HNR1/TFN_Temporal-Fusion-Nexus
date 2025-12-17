@@ -1,0 +1,206 @@
+{
+    "graft_loss": {
+      "time_series_only": [
+        {
+          "period": "30_day",
+          "mean": 0.8606,
+          "std": 0.016
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8548,
+          "std": 0.0211
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8503,
+          "std": 0.0129
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8275,
+          "std": 0.019
+        }
+      ],
+      "time_series_static": [
+        {
+          "period": "30_day",
+          "mean": 0.9002,
+          "std": 0.01
+        },
+        {
+          "period": "90_day",
+          "mean": 0.898,
+          "std": 0.0166
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8889,
+          "std": 0.0137
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8894,
+          "std": 0.0148
+        }
+      ],
+      "time_series_static_notes": [
+        {
+          "period": "30_day",
+          "mean": 0.962,
+          "std": 0.0061
+        },
+        {
+          "period": "90_day",
+          "mean": 0.9648,
+          "std": 0.0106
+        },
+        {
+          "period": "180_day",
+          "mean": 0.9622,
+          "std": 0.0088
+        },
+        {
+          "period": "360_day",
+          "mean": 0.9496,
+          "std": 0.0121
+        }
+      ]
+    },
+    "graft_rejection": {
+      "time_series_only": [
+        {
+          "period": "30_day",
+          "mean": 0.768,
+          "std": 0.0177
+        },
+        {
+          "period": "90_day",
+          "mean": 0.7562,
+          "std": 0.0153
+        },
+        {
+          "period": "180_day",
+          "mean": 0.764,
+          "std": 0.0202
+        },
+        {
+          "period": "360_day",
+          "mean": 0.7509,
+          "std": 0.0221
+        }
+      ],
+      "time_series_static": [
+        {
+          "period": "30_day",
+          "mean": 0.8041,
+          "std": 0.0144
+        },
+        {
+          "period": "90_day",
+          "mean": 0.7932,
+          "std": 0.0166
+        },
+        {
+          "period": "180_day",
+          "mean": 0.7978,
+          "std": 0.0123
+        },
+        {
+          "period": "360_day",
+          "mean": 0.7738,
+          "std": 0.0173
+        }
+      ],
+      "time_series_static_notes": [
+        {
+          "period": "30_day",
+          "mean": 0.8439,
+          "std": 0.0116
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8471,
+          "std": 0.0125
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8488,
+          "std": 0.0102
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8235,
+          "std": 0.0136
+        }
+      ]
+    },
+    "mortality": {
+      "time_series_only": [
+        {
+          "period": "30_day",
+          "mean": 0.724,
+          "std": 0.0128
+        },
+        {
+          "period": "90_day",
+          "mean": 0.711,
+          "std": 0.0193
+        },
+        {
+          "period": "180_day",
+          "mean": 0.7177,
+          "std": 0.0143
+        },
+        {
+          "period": "360_day",
+          "mean": 0.6905,
+          "std": 0.0204
+        }
+      ],
+      "time_series_static": [
+        {
+          "period": "30_day",
+          "mean": 0.8022,
+          "std": 0.0111
+        },
+        {
+          "period": "90_day",
+          "mean": 0.7893,
+          "std": 0.0149
+        },
+        {
+          "period": "180_day",
+          "mean": 0.7883,
+          "std": 0.0165
+        },
+        {
+          "period": "360_day",
+          "mean": 0.7725,
+          "std": 0.0138
+        }
+      ],
+      "time_series_static_notes": [
+        {
+          "period": "30_day",
+          "mean": 0.8601,
+          "std": 0.0095
+        },
+        {
+          "period": "90_day",
+          "mean": 0.8587,
+          "std": 0.0113
+        },
+        {
+          "period": "180_day",
+          "mean": 0.8514,
+          "std": 0.0127
+        },
+        {
+          "period": "360_day",
+          "mean": 0.8387,
+          "std": 0.0116
+        }
+      ]
+    }
+  }
