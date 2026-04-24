@@ -1,6 +1,12 @@
 data/v1/
+data/embeddings/
+data/finetuning/
 data/v2/
 *__pycache__
 .vscode
 .conda
 .venv
+models/
+# These are the folder which Waasiq used for his thesis for his own understanding.
+waasiq/
+notebooks/logs
