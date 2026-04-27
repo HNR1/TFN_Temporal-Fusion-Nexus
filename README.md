@@ -43,6 +43,7 @@ NephroCAGE is not available publicly. We ustilised NephroCAGE v1 raw files under
 
 ## Modeling Overview
 - Time-series backbone: `TimeAwareLSTM` (elapsed-time aware) with optional temporal self-attention (`TimeAwareAttentionEncoder`) or a vanilla LSTM encoder.
+- Feature-level missingness: `value_mask` is carried through batching and can be used at model input time to mark missing values within real timesteps separately from batch padding.
 - Static fusion: `StaticEncoder` embeds categorical + scaled numerical features and injects them into hidden states.
 - Notes fusion: `NotesEncoder` (GTE-large) with cross-attention for time steps to attend to note embeddings.
 - Heads: `MultiModal` for deterministic forecasting; `MultiModalVAE` for variational modeling; `SimpleMLP` for lightweight classification.

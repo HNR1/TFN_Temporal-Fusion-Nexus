@@ -9,6 +9,23 @@ from config import CONFIG
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+def inject_missing_value_sentinel(x: Tensor, value_mask: Tensor | None, sequence_mask: Tensor | None = None) -> Tensor:
+    if value_mask is None:
+        return x
+
+    if x.shape != value_mask.shape:
+        raise ValueError(f"value_mask shape {value_mask.shape} does not match x shape {x.shape}")
+
+    missing_sentinel = torch.full_like(x, CONFIG['MISSING_TS_SENTINEL'])
+    masked_x = torch.where(value_mask.bool(), x, missing_sentinel)
+
+    # Keep batch padding at the padding value instead of turning padded rows into "all missing".
+    if sequence_mask is not None:
+        masked_x = masked_x * sequence_mask.unsqueeze(-1).to(dtype=x.dtype)
+
+    return masked_x
+
 class StaticEncoder(nn.Module):
     def __init__(self, categorical_cardinalities):
         super(StaticEncoder, self).__init__()
@@ -130,7 +147,7 @@ class MultiModalVAE(nn.Module):
         eps = torch.randn_like(std)
         return mu + eps * std
 
-    def forward(self, x, elapsed_times=None, timesteps=None, notes_embeddings=None, notes_timesteps=None, static_features=None, mask=None, notes_mask=None):
+    def forward(self, x, elapsed_times=None, timesteps=None, notes_embeddings=None, notes_timesteps=None, static_features=None, mask=None, notes_mask=None, value_mask=None):
         """
         x: Input sequence of shape (batch_size, seq_length, input_size)
         elapsed_times: Elapsed times between time series data points of shape (batch_size, seq_length)
@@ -140,8 +157,10 @@ class MultiModalVAE(nn.Module):
         static_features: tuple of categorical and numerical static features
         mask: mask for the padding of sequences in batch. True where real data, false where padded
         notes_mask: mask for padded notes in batch
+        value_mask: feature-level observation mask aligned with x. Missing values inside real timesteps are replaced by a sentinel.
         """
 
+        x = inject_missing_value_sentinel(x, value_mask=value_mask, sequence_mask=mask)
         lstm_out, attn_weights = self.lstm_encoder(x, elapsed_times, mask)  # lstm_out: (batch_size, seq_length, lstm_hidden_size)
         
         assert not torch.isnan(lstm_out).any(), "NaN detected in LSTM output"
@@ -242,7 +261,7 @@ class MultiModal(nn.Module):
 
         self.ff = nn.Linear(CONFIG['lstm_hidden_size'], len(CONFIG['ts_features']))
 
-    def forward(self, x, elapsed_times=None, timesteps=None, notes_embeddings=None, notes_timesteps=None, static_features=None, mask=None, notes_mask=None):
+    def forward(self, x, elapsed_times=None, timesteps=None, notes_embeddings=None, notes_timesteps=None, static_features=None, mask=None, notes_mask=None, value_mask=None):
         """
         x: Input sequence of shape (batch_size, seq_length, input_size)
         elapsed_times: Elapsed times between time series data points of shape (batch_size, seq_length)
@@ -252,8 +271,10 @@ class MultiModal(nn.Module):
         static_features: tuple of categorical and numerical static features
         mask: mask for the padding of sequences in batch. True where real data, false where padded
         notes_mask: mask for padded notes in batch
+        value_mask: feature-level observation mask aligned with x. Missing values inside real timesteps are replaced by a sentinel.
         """
 
+        x = inject_missing_value_sentinel(x, value_mask=value_mask, sequence_mask=mask)
         lstm_out, attn_weights = self.lstm_encoder(x, elapsed_times, mask)  # lstm_out: (batch_size, seq_length, lstm_hidden_size)
         
         assert not torch.isnan(lstm_out).any(), "NaN detected in LSTM output"

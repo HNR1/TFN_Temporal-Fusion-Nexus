@@ -12,5 +12,6 @@ CONFIG = {
     'lstm_num_layers': 2,
     'num_heads': 2,
     'PADDING_VAL': 0,
+    'MISSING_TS_SENTINEL': -3.0, # value used after scaling to mark feature-level missingness inside real timesteps
     'notes_embedding_dim': 1024, # embedding dim of clinical notes
 }
