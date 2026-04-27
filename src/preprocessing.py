@@ -558,7 +558,11 @@ def create_dataset_splits(
         allowed_patient_ids = set(patient_ids)
         eligible_patient_ids = np.asarray([pid for pid in eligible_patient_ids if pid in allowed_patient_ids])
 
-    if max_patients is not None:
+    if max_patients is not None and len(eligible_patient_ids) > max_patients:
+        if shuffle:
+            rng = np.random.default_rng(random_state)
+            eligible_patient_ids = eligible_patient_ids.copy()
+            rng.shuffle(eligible_patient_ids)
         eligible_patient_ids = eligible_patient_ids[:max_patients]
 
     split_ids = split_patient_ids(
@@ -796,11 +800,13 @@ class NephroCAGEDataset(Dataset):
         # Handle notes embeddings and timesteps
         notes_rows = self.notes_df[self.notes_df['patient_id'] == patient_id]
         notes_timesteps = torch.tensor(notes_rows['rel_days'].values.astype(np.int64))
-        if 'embeddings' in self.notes_df.columns and not notes_rows.empty:
-            notes_embeddings = torch.tensor(np.stack(notes_rows['embeddings'].values), dtype=torch.float32)
+        if 'embeddings' in self.notes_df.columns:
+            if notes_rows.empty:
+                notes_embeddings = torch.empty((0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+            else:
+                notes_embeddings = torch.tensor(np.stack(notes_rows['embeddings'].values), dtype=torch.float32)
         else:
-            # Return an empty embedding of shape (0, embedding_dim)
-            notes_embeddings = None  # Set to None if embeddings are not available
+            notes_embeddings = None
 
         # get labels
         labels = self.labels[self.labels['patient_id'] == patient_id]
@@ -839,14 +845,27 @@ def collate_fn(batch):
 
     # Collect sequence lengths
     seq_lengths = torch.tensor([item['seq_len'] for item in batch], dtype=torch.long)
-    # Check if notes embeddings are available in the batch
-    has_notes = True
-    if batch[0]['notes_embeddings'] is None:
-        has_notes = False
+    # Check if note embeddings are available anywhere in the batch. When the
+    # embeddings column exists, patients without notes contribute empty tensors.
+    has_notes = any(item['notes_embeddings'] is not None for item in batch)
     if has_notes:
-        notes_lengths = torch.tensor([item['notes_embeddings'].shape[0] for item in batch], dtype=torch.long)
+        notes_emb_list = [
+            item['notes_embeddings']
+            if item['notes_embeddings'] is not None
+            else torch.empty((0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+            for item in batch
+        ]
+        notes_timesteps_list = [
+            item['notes_timesteps']
+            if item['notes_embeddings'] is not None
+            else torch.empty((0,), dtype=torch.long)
+            for item in batch
+        ]
+        notes_lengths = torch.tensor([item.shape[0] for item in notes_emb_list], dtype=torch.long)
         max_notes_len = notes_lengths.max().item()
     else:
+        notes_emb_list = None
+        notes_timesteps_list = None
         notes_lengths = None
         max_notes_len = None
 
@@ -860,10 +879,16 @@ def collate_fn(batch):
             # Pad 'ts_features', 'timsteps', and 'value_mask' to make all sequences the same length
             padding_value = CONFIG['PADDING_VAL'] if key != 'value_mask' else 0
             collated_batch[key] = pad_sequence(data, batch_first=True, padding_value=padding_value)
-        elif key == 'notes_embeddings' or key == 'notes_timesteps':
-            # Pad notes embeddings and timesteps
+        elif key == 'notes_embeddings':
             if has_notes:
-                collated_batch[key] = pad_sequence(data, batch_first=True, padding_value=0)
+                collated_batch[key] = pad_sequence(notes_emb_list, batch_first=True, padding_value=0)
+            else:
+                collated_batch[key] = None
+        elif key == 'notes_timesteps':
+            if has_notes:
+                collated_batch[key] = pad_sequence(notes_timesteps_list, batch_first=True, padding_value=0)
+            else:
+                collated_batch[key] = None
         elif key == 'seq_len':
             # Already collected sequence lengths
             collated_batch[key] = seq_lengths
@@ -884,6 +909,8 @@ def collate_fn(batch):
         notes_mask = torch.arange(max_notes_len).expand(batch_size, max_notes_len) < notes_lengths.unsqueeze(1)
         collated_batch['notes_mask'] = notes_mask  # Shape: (batch_size, max_notes_len)
     else:
-        collated_batch['notes_mask'] = None
+        collated_batch['notes_embeddings'] = torch.empty((batch_size, 0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+        collated_batch['notes_timesteps'] = torch.empty((batch_size, 0), dtype=torch.long)
+        collated_batch['notes_mask'] = torch.zeros((batch_size, 0), dtype=torch.bool)
 
     return collated_batch

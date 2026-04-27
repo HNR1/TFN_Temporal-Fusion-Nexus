@@ -16,6 +16,9 @@ def compute_mutual_information_appr(x, y):
     Returns:
         torch.Tensor: MI estimate of shape (D1, D2)
     """
+    if x.shape[0] < 2:
+        return torch.zeros((x.shape[1], y.shape[1]), device=x.device, dtype=x.dtype)
+
     # Normalize inputs
     x = x - x.mean(dim=0, keepdim=True)
     y = y - y.mean(dim=0, keepdim=True)
@@ -25,8 +28,88 @@ def compute_mutual_information_appr(x, y):
     mi = torch.abs((x.T @ y) / (x.shape[0] - 1))
     return mi
 
+
+def get_last_valid_step(sequence, mask=None):
+    """
+    Gather the last non-padded timestep for each sequence in the batch.
+
+    Args:
+        sequence (torch.Tensor): Tensor of shape (B, T, D).
+        mask (torch.Tensor | None): Boolean-like tensor of shape (B, T) where
+            True marks real timesteps. If None, the last batch position is used.
+    """
+    if sequence.dim() != 3:
+        raise ValueError(f"sequence must have shape (B, T, D), got {sequence.shape}")
+
+    if mask is None:
+        return sequence[:, -1, :]
+
+    if mask.shape != sequence.shape[:2]:
+        raise ValueError(f"mask shape {mask.shape} does not match sequence shape {sequence.shape[:2]}")
+
+    lengths = mask.long().sum(dim=1)
+    if (lengths == 0).any():
+        raise ValueError("Each sequence must contain at least one valid timestep")
+
+    last_indices = lengths - 1
+    batch_indices = torch.arange(sequence.size(0), device=sequence.device)
+    return sequence[batch_indices, last_indices]
+
+
+def masked_mean_over_time(sequence, mask):
+    """
+    Compute the mean over valid timesteps only.
+    """
+    if sequence.dim() != 3:
+        raise ValueError(f"sequence must have shape (B, T, D), got {sequence.shape}")
+    if mask is None:
+        return sequence.mean(dim=1)
+    if mask.shape != sequence.shape[:2]:
+        raise ValueError(f"mask shape {mask.shape} does not match sequence shape {sequence.shape[:2]}")
+
+    weights = mask.unsqueeze(-1).to(sequence.dtype)
+    counts = weights.sum(dim=1).clamp(min=1)
+    return (sequence * weights).sum(dim=1) / counts
+
+
+def get_last_valid_note_embedding(notes_embeddings, notes_mask=None):
+    """
+    Gather the last real note embedding per sample. Samples with no notes return
+    an all-zero embedding so downstream auxiliary losses remain well-defined.
+    """
+    if notes_embeddings.dim() != 3:
+        raise ValueError(
+            f"notes_embeddings must have shape (B, S, D), got {notes_embeddings.shape}"
+        )
+
+    batch_size, num_notes, note_dim = notes_embeddings.shape
+    if num_notes == 0:
+        return torch.zeros((batch_size, note_dim), device=notes_embeddings.device, dtype=notes_embeddings.dtype)
+
+    if notes_mask is None:
+        return notes_embeddings[:, -1, :]
+
+    if notes_mask.shape != notes_embeddings.shape[:2]:
+        raise ValueError(
+            f"notes_mask shape {notes_mask.shape} does not match note shape {notes_embeddings.shape[:2]}"
+        )
+
+    lengths = notes_mask.long().sum(dim=1)
+    safe_indices = lengths.clamp(min=1) - 1
+    batch_indices = torch.arange(batch_size, device=notes_embeddings.device)
+    last_notes = notes_embeddings[batch_indices, safe_indices]
+
+    no_notes = lengths == 0
+    if no_notes.any():
+        last_notes = last_notes.clone()
+        last_notes[no_notes] = 0
+
+    return last_notes
+
 def modality_mi_loss(lstm_states, static_emb, notes_emb):
     B, D = lstm_states.shape
+    if B < 2:
+        return torch.zeros((), device=lstm_states.device, dtype=lstm_states.dtype)
     
     # Compute MI between each lstm dimension and each modality
     mi_static = compute_mutual_information_appr(lstm_states, static_emb)
@@ -167,6 +250,8 @@ def correlation_loss(z):
         torch.Tensor: Scalar decorrelation loss value.
     """
     B, D = z.shape
+    if B < 2:
+        return torch.zeros((), device=z.device, dtype=z.dtype)
 
     # Normalize to zero mean
     z = z - z.mean(dim=0, keepdim=True)
@@ -192,6 +277,8 @@ def balanced_correlation_loss(z, beta=0.5):
         torch.Tensor: Scalar loss value.
     """
     B, D = z.shape
+    if B < 2:
+        return torch.zeros((), device=z.device, dtype=z.dtype)
 
     # Normalize to zero mean
     z = z - z.mean(dim=0, keepdim=True)

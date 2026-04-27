@@ -225,8 +225,7 @@ class MultiModalVAE(nn.Module):
             #lstm_out = F.relu(self.static_fusion_layer(lstm_out)) # project back to (batch_size, seq_length, lstm_hidden_size)
 
         attn_weights_notes = None
-        if self.use_notes:
-            assert(notes_embeddings is not None)
+        if self.use_notes and notes_embeddings is not None and notes_embeddings.size(1) > 0:
             assert not torch.isnan(notes_embeddings).any(), "NaN detected in notes embeddings"
             # downprojection of notes to match lstm hidden size
             notes_embeddings = F.relu(self.downproj(notes_embeddings))
@@ -337,8 +336,7 @@ class MultiModal(nn.Module):
             #lstm_out = F.relu(self.static_fusion_layer(lstm_out)) # project back to (batch_size, seq_length, lstm_hidden_size)
 
         attn_weights_notes = None
-        if self.use_notes:
-            assert(notes_embeddings is not None)
+        if self.use_notes and notes_embeddings is not None and notes_embeddings.size(1) > 0:
             assert not torch.isnan(notes_embeddings).any(), "NaN detected in notes embeddings"
             # downprojection of notes to match lstm hidden size
             notes_embeddings = F.relu(self.downproj(notes_embeddings))
