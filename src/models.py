@@ -26,6 +26,50 @@ def inject_missing_value_sentinel(x: Tensor, value_mask: Tensor | None, sequence
 
     return masked_x
 
+
+def build_notes_causal_attention_mask(
+    timesteps: Tensor,
+    notes_timesteps: Tensor,
+    notes_mask: Tensor | None,
+    num_heads: int,
+) -> tuple[Tensor, Tensor]:
+    """
+    Build a boolean cross-attention mask that blocks notes from the future.
+
+    Returns:
+        attn_mask: Boolean mask of shape (B * num_heads, L, S) with True=blocked.
+        has_valid_causal_note: Boolean mask of shape (B, L) indicating which query
+            timesteps have at least one non-padded note at or before the query time.
+    """
+    B, L = timesteps.shape
+    _, S = notes_timesteps.shape
+
+    t_i = timesteps.unsqueeze(-1)          # (B, L, 1)
+    t_notes = notes_timesteps.unsqueeze(1) # (B, 1, S)
+    future_mask = t_notes > t_i            # (B, L, S), True => block
+
+    if notes_mask is not None:
+        valid_notes = notes_mask.bool().unsqueeze(1).expand(-1, L, -1)
+    else:
+        valid_notes = torch.ones_like(future_mask, dtype=torch.bool)
+
+    has_valid_causal_note = (~future_mask & valid_notes).any(dim=-1)  # (B, L)
+    safe_mask = future_mask.clone()
+
+    # MultiheadAttention cannot handle rows where every key is masked. For those
+    # rows, temporarily unmask one real note to keep the softmax finite, then
+    # zero the resulting attention output afterwards so no future note is used.
+    if (~has_valid_causal_note).any():
+        batch_idx, query_idx = (~has_valid_causal_note).nonzero(as_tuple=True)
+        if notes_mask is not None:
+            fallback_note_idx = notes_mask.bool().float().argmax(dim=-1)
+        else:
+            fallback_note_idx = torch.zeros(B, dtype=torch.long, device=timesteps.device)
+        safe_mask[batch_idx, query_idx, fallback_note_idx[batch_idx]] = False
+
+    attn_mask = safe_mask.unsqueeze(1).expand(-1, num_heads, -1, -1).reshape(B * num_heads, L, S)
+    return attn_mask, has_valid_causal_note
+
 class StaticEncoder(nn.Module):
     def __init__(self, categorical_cardinalities):
         super(StaticEncoder, self).__init__()
@@ -193,27 +237,14 @@ class MultiModalVAE(nn.Module):
                 padding_notes_mask = ~notes_mask.bool()
 
             attn_mask = None
+            has_valid_causal_note = None
             if timesteps is not None and notes_timesteps is not None:
-                # timesteps => (B, L)
-                # notes_timesteps => (B, S)
-                B, L = timesteps.shape
-                _, S = notes_timesteps.shape
-                t_i = timesteps.unsqueeze(-1)          # (B, L, 1)
-                t_notes = notes_timesteps.unsqueeze(1) # (B, 1, S)
-                # True => block => note is strictly in future
-                base_mask = (t_notes > t_i)           # (B, L, S)
-
-                # (optional) fix fully-blocked rows
-                for b in range(B):
-                    for l in range(L):
-                        if base_mask[b, l].all():
-                            # if you do not want to produce all-blocked => unmask them:
-                            base_mask[b, l] = False
-
-                # We must expand to (B*num_heads, L, S)
-                num_heads = self.cross_attention.num_heads
-                base_mask_4d = base_mask.unsqueeze(1).repeat(1, num_heads, 1, 1)  # (B, num_heads, L, S)
-                attn_mask = base_mask_4d.view(B * num_heads, L, S)               # (B*num_heads, L, S)
+                attn_mask, has_valid_causal_note = build_notes_causal_attention_mask(
+                    timesteps=timesteps,
+                    notes_timesteps=notes_timesteps,
+                    notes_mask=notes_mask,
+                    num_heads=self.cross_attention.num_heads,
+                )
 
 
             # Let the time steps attend to the notes (only up to the same-time notes)
@@ -222,10 +253,21 @@ class MultiModalVAE(nn.Module):
                 query=lstm_out,  # hidden states from LSTM for each timestep
                 key=notes_embeddings,  # notes_embeddings for different timesteps
                 value=notes_embeddings,
-                attn_mask=None,
+                attn_mask=attn_mask,
                 key_padding_mask=padding_notes_mask,
-                is_causal=False # Not strictly causal for cross-attention
+                is_causal=False # custom causal cross-attention mask is passed via attn_mask
             )
+
+            if has_valid_causal_note is not None:
+                valid_rows = has_valid_causal_note.unsqueeze(-1).to(attn_output.dtype)
+                attn_output = attn_output * valid_rows
+
+                if attn_weights_notes is not None:
+                    if attn_weights_notes.dim() == 3:
+                        attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(-1).to(attn_weights_notes.dtype)
+                    elif attn_weights_notes.dim() == 4:
+                        attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(1).unsqueeze(-1).to(attn_weights_notes.dtype)
+
             lstm_out = self.layer_norm(lstm_out + attn_output)
 
         # VAE encoding
@@ -307,27 +349,14 @@ class MultiModal(nn.Module):
                 padding_notes_mask = ~notes_mask.bool()
 
             attn_mask = None
+            has_valid_causal_note = None
             if timesteps is not None and notes_timesteps is not None:
-                # timesteps => (B, L)
-                # notes_timesteps => (B, S)
-                B, L = timesteps.shape
-                _, S = notes_timesteps.shape
-                t_i = timesteps.unsqueeze(-1)          # (B, L, 1)
-                t_notes = notes_timesteps.unsqueeze(1) # (B, 1, S)
-                # True => block => note is strictly in future
-                base_mask = (t_notes > t_i)           # (B, L, S)
-
-                # (optional) fix fully-blocked rows
-                for b in range(B):
-                    for l in range(L):
-                        if base_mask[b, l].all():
-                            # if you do not want to produce all-blocked => unmask them:
-                            base_mask[b, l] = False
-
-                # We must expand to (B*num_heads, L, S)
-                num_heads = self.cross_attention.num_heads
-                base_mask_4d = base_mask.unsqueeze(1).repeat(1, num_heads, 1, 1)  # (B, num_heads, L, S)
-                attn_mask = base_mask_4d.view(B * num_heads, L, S)               # (B*num_heads, L, S)
+                attn_mask, has_valid_causal_note = build_notes_causal_attention_mask(
+                    timesteps=timesteps,
+                    notes_timesteps=notes_timesteps,
+                    notes_mask=notes_mask,
+                    num_heads=self.cross_attention.num_heads,
+                )
 
 
             # Let the time steps attend to the notes (only up to the same-time notes)
@@ -336,10 +365,21 @@ class MultiModal(nn.Module):
                 query=lstm_out,  # hidden states from LSTM for each timestep
                 key=notes_embeddings,  # notes_embeddings for different timesteps
                 value=notes_embeddings,
-                attn_mask=None,
+                attn_mask=attn_mask,
                 key_padding_mask=padding_notes_mask,
-                is_causal=False # Not strictly causal for cross-attention
+                is_causal=False # custom causal cross-attention mask is passed via attn_mask
             )
+
+            if has_valid_causal_note is not None:
+                valid_rows = has_valid_causal_note.unsqueeze(-1).to(attn_output.dtype)
+                attn_output = attn_output * valid_rows
+
+                if attn_weights_notes is not None:
+                    if attn_weights_notes.dim() == 3:
+                        attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(-1).to(attn_weights_notes.dtype)
+                    elif attn_weights_notes.dim() == 4:
+                        attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(1).unsqueeze(-1).to(attn_weights_notes.dtype)
+
             lstm_out = self.layer_norm(lstm_out + attn_output)
 
         outputs = self.ff(lstm_out)  # (batch_size, seq_length, input_size)
