@@ -48,7 +48,7 @@ NephroCAGE is not available publicly. We ustilised NephroCAGE v1 raw files under
 - Heads: `MultiModal` for deterministic forecasting; `MultiModalVAE` for variational modeling; `SimpleMLP` for lightweight classification.
 
 ## Training and Evaluation
-- Main flows: `training.ipynb` (multimodal forecasting/classification) and `vae_training.ipynb` (generative).
+- Main flows: `training.ipynb` (multimodal discriminative) and `vae_training.ipynb` (generative).
 - Extras: `classification.ipynb` + `classification_calibration.ipynb` (risk and calibration), `clustering.ipynb` (latent analysis), `interpret.ipynb` (feature importance/SHAP), `visualizations.ipynb` + `results.ipynb` (plots/metrics), `study.ipynb` (user study summaries).
 - Aggregated AUROCs by horizon are stored in `data/results/final_res.json`; other experiment variants are in `data/results/*.json`.
 
