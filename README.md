@@ -37,7 +37,8 @@ NephroCAGE is not available publicly. We ustilised NephroCAGE v1 raw files under
   - `get_dfs(project_path)` loads all raw tables.
   - `create_static_df`, `create_vitals_df`, `create_medication_df`, `create_notes_df` clean each modality.
   - `create_ts_data` merges vitals/labs/meds, computes eGFR, and aligns timelines.
-  - `NephroCAGEDataset` packages static + time-series + note embeddings with masks; `collate_fn` pads variable-length batches.
+  - `get_valid_patient_ids`, `split_patient_ids`, and `create_dataset_splits` build patient-level train/val/test splits before fitting preprocessors.
+  - `NephroCAGEDataset` packages static + time-series + note embeddings with masks and can reuse train-fitted preprocessing artifacts for val/test; `collate_fn` pads variable-length batches.
 - `CONFIG` in `src/config.py` lists static categorical/numerical features, time-series features, padding value, and model dimensions.
 
 ## Modeling Overview

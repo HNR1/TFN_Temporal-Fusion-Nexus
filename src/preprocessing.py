@@ -1,6 +1,8 @@
 import pandas as pd
 import numpy as np
 import os
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -14,6 +16,14 @@ from sklearn.impute import SimpleImputer
 from config import CONFIG
 
 # Preprocessing for the NephroCAGE dataset v1
+
+
+@dataclass
+class PreprocessingArtifacts:
+    label_encoders: dict[str, LabelEncoder]
+    categorical_cardinalities: list[int]
+    static_scaler: StandardScaler
+    ts_scaler: StandardScaler
 
 files = {
         'baseline_parameters': '1_BAseline_parameter_fertig2_HLA_Pirche_final.xlsx',
@@ -470,55 +480,185 @@ def create_ts_data(vitals_ca, vitals_lab=None, medication=None, merge_lab=True, 
     return ts_data
 
 
+def get_valid_patient_ids(static_df: pd.DataFrame, ts_data: pd.DataFrame, notes_df: pd.DataFrame, min_ts_count: int = 10, require_notes: bool = True) -> np.ndarray:
+    ordered_patient_ids = static_df['patient_id'].dropna().drop_duplicates().tolist()
+    ts_counts = ts_data.groupby('patient_id').size().to_dict()
+    notes_counts = notes_df.groupby('patient_id').size().to_dict()
+
+    valid_patient_ids = []
+    for patient_id in ordered_patient_ids:
+        if ts_counts.get(patient_id, 0) < min_ts_count:
+            continue
+        if require_notes and notes_counts.get(patient_id, 0) == 0:
+            continue
+        valid_patient_ids.append(patient_id)
+
+    return np.asarray(valid_patient_ids)
+
+
+def split_patient_ids(patient_ids: Sequence, train_size: float = 0.8, val_size: float = 0.0, test_size: float = 0.2, random_state: int = 42, shuffle: bool = True) -> dict[str, np.ndarray]:
+    patient_ids = np.asarray(patient_ids)
+    if patient_ids.ndim != 1:
+        raise ValueError("patient_ids must be one-dimensional")
+    if len(patient_ids) == 0:
+        raise ValueError("No patient_ids available for splitting")
+
+    total = train_size + val_size + test_size
+    if not np.isclose(total, 1.0):
+        raise ValueError("train_size + val_size + test_size must equal 1.0")
+
+    split_ids = patient_ids.copy()
+    if shuffle:
+        rng = np.random.default_rng(random_state)
+        rng.shuffle(split_ids)
+
+    n_total = len(split_ids)
+    n_test = 0 if test_size == 0 else max(1, int(round(test_size * n_total)))
+    n_val = 0 if val_size == 0 else max(1, int(round(val_size * n_total)))
+    if n_test + n_val >= n_total:
+        raise ValueError("Split sizes leave no patients for the training set")
+
+    n_train = n_total - n_val - n_test
+
+    train_ids = split_ids[:n_train]
+    val_ids = split_ids[n_train:n_train + n_val]
+    test_ids = split_ids[n_train + n_val:]
+
+    return {
+        'train': train_ids,
+        'val': val_ids,
+        'test': test_ids,
+    }
+
+
+def create_dataset_splits(
+    static_df: pd.DataFrame,
+    ts_data: pd.DataFrame,
+    notes_df: pd.DataFrame,
+    biopsy_df: pd.DataFrame,
+    train_size: float = 0.8,
+    val_size: float = 0.0,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    shuffle: bool = True,
+    max_patients: Optional[int] = None,
+    patient_ids: Optional[Sequence] = None,
+    min_ts_count: int = 10,
+    require_notes: bool = True,
+) -> dict[str, object]:
+    eligible_patient_ids = get_valid_patient_ids(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+
+    if patient_ids is not None:
+        allowed_patient_ids = set(patient_ids)
+        eligible_patient_ids = np.asarray([pid for pid in eligible_patient_ids if pid in allowed_patient_ids])
+
+    if max_patients is not None:
+        eligible_patient_ids = eligible_patient_ids[:max_patients]
+
+    split_ids = split_patient_ids(
+        patient_ids=eligible_patient_ids,
+        train_size=train_size,
+        val_size=val_size,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=shuffle,
+    )
+
+    train_dataset = NephroCAGEDataset(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        biopsy_df=biopsy_df,
+        patient_ids=split_ids['train'],
+        fit_preprocessing=True,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+    preprocessing_artifacts = train_dataset.preprocessing_artifacts
+
+    val_dataset = None
+    if len(split_ids['val']) > 0:
+        val_dataset = NephroCAGEDataset(
+            static_df=static_df,
+            ts_data=ts_data,
+            notes_df=notes_df,
+            biopsy_df=biopsy_df,
+            patient_ids=split_ids['val'],
+            preprocessing_artifacts=preprocessing_artifacts,
+            fit_preprocessing=False,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
+
+    test_dataset = None
+    if len(split_ids['test']) > 0:
+        test_dataset = NephroCAGEDataset(
+            static_df=static_df,
+            ts_data=ts_data,
+            notes_df=notes_df,
+            biopsy_df=biopsy_df,
+            patient_ids=split_ids['test'],
+            preprocessing_artifacts=preprocessing_artifacts,
+            fit_preprocessing=False,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
+
+    full_dataset = NephroCAGEDataset(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        biopsy_df=biopsy_df,
+        patient_ids=eligible_patient_ids,
+        preprocessing_artifacts=preprocessing_artifacts,
+        fit_preprocessing=False,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+
+    return {
+        'train': train_dataset,
+        'val': val_dataset,
+        'test': test_dataset,
+        'full': full_dataset,
+        'patient_ids': {
+            'selected': eligible_patient_ids,
+            **split_ids,
+        },
+        'preprocessing_artifacts': preprocessing_artifacts,
+    }
+
+
 class NephroCAGEDataset(Dataset):
-    def __init__(self, static_df: pd.DataFrame, ts_data: pd.DataFrame, notes_df: pd.DataFrame, biopsy_df: pd.DataFrame):
+    def __init__(
+        self,
+        static_df: pd.DataFrame,
+        ts_data: pd.DataFrame,
+        notes_df: pd.DataFrame,
+        biopsy_df: pd.DataFrame,
+        patient_ids: Optional[Sequence] = None,
+        preprocessing_artifacts: Optional[PreprocessingArtifacts] = None,
+        fit_preprocessing: bool = True,
+        min_ts_count: int = 10,
+        require_notes: bool = True,
+    ):
+        if not fit_preprocessing and preprocessing_artifacts is None:
+            raise ValueError("preprocessing_artifacts must be provided when fit_preprocessing is False")
 
         self.static_df = static_df.copy()
+        self.ts_data = ts_data.copy()
+        self.notes_df = notes_df.copy()  # Included as a separate dataframe
 
         # create graft loss labels
         self.labels = self.static_df[['patient_id', 'loss_rel_days', 'death_rel_days']].copy()
         self.labels['graft_loss_label'] = self.labels['loss_rel_days'].notna().astype(int)
         self.labels['death_label'] = self.labels['death_rel_days'].notna().astype(int)
-
-        # Handle missing values in static df
-        # Use -1/Unknown to indicate missing value
-        for col in CONFIG['static_numerical_cols']:
-            self.static_df[col] = self.static_df[col].fillna(-1)
-            #median = self.static_df[col].median()
-            #self.static_df[col] = self.static_df[col].fillna(median)
-        for col in CONFIG['static_categorical_cols']:
-            self.static_df[col] = self.static_df[col].fillna('Unknown')
-
-        # Encode categorical variables
-        self.label_encoders = {}
-        for col in CONFIG['static_categorical_cols']:
-            le = LabelEncoder()
-            self.static_df[col] = le.fit_transform(self.static_df[col])
-            self.label_encoders[col] = le
-
-        self.categorical_cardinalities = [
-            len(le.classes_) for le in self.label_encoders.values()
-        ]
-
-        # Normalize numerical variables
-        self.scaler = StandardScaler()
-        self.static_df[CONFIG['static_numerical_cols']] = self.scaler.fit_transform(
-            self.static_df[CONFIG['static_numerical_cols']]
-        )
-
-        self.ts_data = ts_data.copy()
-        # value mask for time series data
-        self.ts_data_value_mask = self.ts_data[['patient_id', 'rel_days']].copy()
-        self.ts_data_value_mask[CONFIG['ts_features']] = (~self.ts_data[CONFIG['ts_features']].isna()).astype(int)
-
-        # replace NaNs with padding value
-        self.ts_data[CONFIG['ts_features']] = self.ts_data[CONFIG['ts_features']].fillna(CONFIG['PADDING_VAL'])
-
-        # Normalize
-        self.ts_scaler = StandardScaler()
-        self.ts_data[CONFIG['ts_features']] = self.ts_scaler.fit_transform(self.ts_data[CONFIG['ts_features']])
-
-        self.notes_df = notes_df.copy()  # Included as a separate dataframe
 
         # Compute rejection label by BANFF categories 2 and 4
         biopsy_df['Banff 17 categorie'] = pd.to_numeric(biopsy_df['Banff 17 categorie'], errors='coerce')
@@ -527,16 +667,18 @@ class NephroCAGEDataset(Dataset):
         
         # Convert to dictionary: { patient_id: [day1, day2, ...] }
         self.rej_dict = dict(zip(grouped_rejections['PatientID'], grouped_rejections['rej_rel_days_list']))
-        
-        ts_counts = self.ts_data.groupby('patient_id').size().reset_index(name='counts')
-        valid_patient_ids = ts_counts[ts_counts['counts'] >= 10]['patient_id'].unique()
 
-        notes_counts = self.notes_df.groupby('patient_id').size().reset_index(name='counts')
-        valid_patient_ids_with_notes = notes_counts[notes_counts['counts'] > 0]['patient_id'].unique()
+        valid_patient_ids = get_valid_patient_ids(
+            static_df=self.static_df,
+            ts_data=self.ts_data,
+            notes_df=self.notes_df,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
 
-        # Intersect with the already-valid patients above
-        valid_patient_ids = set(valid_patient_ids).intersection(valid_patient_ids_with_notes)
-        valid_patient_ids = np.array(list(valid_patient_ids))  # turn back to NumPy array
+        if patient_ids is not None:
+            selected_patient_ids = set(patient_ids)
+            valid_patient_ids = np.asarray([pid for pid in valid_patient_ids if pid in selected_patient_ids])
 
         # Filter self.static_df, self.labels, and self.ts_data to include only valid_patient_ids
         self.static_df = self.static_df[self.static_df['patient_id'].isin(valid_patient_ids)].copy()
@@ -544,10 +686,85 @@ class NephroCAGEDataset(Dataset):
         self.ts_data = self.ts_data[self.ts_data['patient_id'].isin(valid_patient_ids)].copy()
         self.notes_df = self.notes_df[self.notes_df['patient_id'].isin(valid_patient_ids)].copy()
 
+        if fit_preprocessing:
+            self.preprocessing_artifacts = self._fit_preprocessing()
+        else:
+            self.preprocessing_artifacts = preprocessing_artifacts
+
+        self._apply_preprocessing(self.preprocessing_artifacts)
+
+        self.label_encoders = self.preprocessing_artifacts.label_encoders
+        self.categorical_cardinalities = self.preprocessing_artifacts.categorical_cardinalities
+        self.scaler = self.preprocessing_artifacts.static_scaler
+        self.ts_scaler = self.preprocessing_artifacts.ts_scaler
+
         # Get unique patient_ids
         self.patient_ids = self.static_df['patient_id'].unique().astype(int)
         if len(self.patient_ids) != len(self.static_df):
             raise ValueError("Duplicate patients in static df")
+
+    def _fit_preprocessing(self) -> PreprocessingArtifacts:
+        static_train = self.static_df.copy()
+        for col in CONFIG['static_numerical_cols']:
+            static_train[col] = static_train[col].fillna(-1)
+        for col in CONFIG['static_categorical_cols']:
+            static_train[col] = static_train[col].fillna('Unknown').astype(str)
+
+        label_encoders = {}
+        for col in CONFIG['static_categorical_cols']:
+            le = LabelEncoder()
+            train_values = static_train[col]
+            if 'Unknown' not in set(train_values):
+                train_values = pd.concat([train_values, pd.Series(['Unknown'])], ignore_index=True)
+            le.fit(train_values)
+            label_encoders[col] = le
+
+        static_scaler = StandardScaler()
+        static_scaler.fit(static_train[CONFIG['static_numerical_cols']])
+
+        # Fit the time-series scaler on the raw train values so NaNs do not distort the moments.
+        ts_scaler = StandardScaler()
+        ts_scaler.fit(self.ts_data[CONFIG['ts_features']])
+
+        categorical_cardinalities = [
+            len(label_encoders[col].classes_) for col in CONFIG['static_categorical_cols']
+        ]
+
+        return PreprocessingArtifacts(
+            label_encoders=label_encoders,
+            categorical_cardinalities=categorical_cardinalities,
+            static_scaler=static_scaler,
+            ts_scaler=ts_scaler,
+        )
+
+    def _apply_preprocessing(self, preprocessing_artifacts: PreprocessingArtifacts) -> None:
+        for col in CONFIG['static_numerical_cols']:
+            self.static_df[col] = self.static_df[col].fillna(-1)
+        for col in CONFIG['static_categorical_cols']:
+            self.static_df[col] = self.static_df[col].fillna('Unknown').astype(str)
+
+        for col, label_encoder in preprocessing_artifacts.label_encoders.items():
+            known_classes = set(label_encoder.classes_)
+            values = self.static_df[col].where(self.static_df[col].isin(known_classes), 'Unknown')
+            self.static_df[col] = label_encoder.transform(values)
+
+        static_scaled = pd.DataFrame(
+            preprocessing_artifacts.static_scaler.transform(self.static_df[CONFIG['static_numerical_cols']]),
+            columns=CONFIG['static_numerical_cols'],
+            index=self.static_df.index,
+        )
+        self.static_df[CONFIG['static_numerical_cols']] = static_scaled
+
+        # Track real observed values before replacing missing entries with the padding sentinel.
+        self.ts_data_value_mask = self.ts_data[['patient_id', 'rel_days']].copy()
+        self.ts_data_value_mask[CONFIG['ts_features']] = (~self.ts_data[CONFIG['ts_features']].isna()).astype(int)
+
+        ts_scaled = pd.DataFrame(
+            preprocessing_artifacts.ts_scaler.transform(self.ts_data[CONFIG['ts_features']]),
+            columns=CONFIG['ts_features'],
+            index=self.ts_data.index,
+        )
+        self.ts_data[CONFIG['ts_features']] = ts_scaled.fillna(CONFIG['PADDING_VAL'])
 
     def __len__(self):
         return len(self.patient_ids)
