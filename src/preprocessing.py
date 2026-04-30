@@ -2,7 +2,7 @@ import pandas as pd
 import numpy as np
 import os
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Mapping, Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -543,6 +543,8 @@ def create_dataset_splits(
     shuffle: bool = True,
     max_patients: Optional[int] = None,
     patient_ids: Optional[Sequence] = None,
+    patient_split_ids: Optional[Mapping[str, Sequence]] = None,
+    preprocessing_artifacts: Optional[PreprocessingArtifacts] = None,
     min_ts_count: int = 10,
     require_notes: bool = True,
 ) -> dict[str, object]:
@@ -555,24 +557,42 @@ def create_dataset_splits(
     )
 
     if patient_ids is not None:
-        allowed_patient_ids = set(patient_ids)
-        eligible_patient_ids = np.asarray([pid for pid in eligible_patient_ids if pid in allowed_patient_ids])
+        eligible_patient_id_set = set(eligible_patient_ids)
+        eligible_patient_ids = np.asarray([pid for pid in patient_ids if pid in eligible_patient_id_set])
 
-    if max_patients is not None and len(eligible_patient_ids) > max_patients:
+    if patient_split_ids is not None:
+        eligible_patient_id_set = set(eligible_patient_ids)
+        selected_patient_ids = patient_split_ids.get('selected', eligible_patient_ids)
+        eligible_patient_ids = np.asarray([pid for pid in selected_patient_ids if pid in eligible_patient_id_set])
+        split_ids = {
+            split_name: np.asarray([pid for pid in patient_split_ids.get(split_name, []) if pid in eligible_patient_id_set])
+            for split_name in ('train', 'val', 'test')
+        }
+    elif max_patients is not None and len(eligible_patient_ids) > max_patients:
         if shuffle:
             rng = np.random.default_rng(random_state)
             eligible_patient_ids = eligible_patient_ids.copy()
             rng.shuffle(eligible_patient_ids)
         eligible_patient_ids = eligible_patient_ids[:max_patients]
+        split_ids = split_patient_ids(
+            patient_ids=eligible_patient_ids,
+            train_size=train_size,
+            val_size=val_size,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+        )
+    else:
+        split_ids = split_patient_ids(
+            patient_ids=eligible_patient_ids,
+            train_size=train_size,
+            val_size=val_size,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+        )
 
-    split_ids = split_patient_ids(
-        patient_ids=eligible_patient_ids,
-        train_size=train_size,
-        val_size=val_size,
-        test_size=test_size,
-        random_state=random_state,
-        shuffle=shuffle,
-    )
+    fit_preprocessing = preprocessing_artifacts is None
 
     train_dataset = NephroCAGEDataset(
         static_df=static_df,
@@ -580,11 +600,13 @@ def create_dataset_splits(
         notes_df=notes_df,
         biopsy_df=biopsy_df,
         patient_ids=split_ids['train'],
-        fit_preprocessing=True,
+        preprocessing_artifacts=preprocessing_artifacts,
+        fit_preprocessing=fit_preprocessing,
         min_ts_count=min_ts_count,
         require_notes=require_notes,
     )
-    preprocessing_artifacts = train_dataset.preprocessing_artifacts
+    if preprocessing_artifacts is None:
+        preprocessing_artifacts = train_dataset.preprocessing_artifacts
 
     val_dataset = None
     if len(split_ids['val']) > 0:
