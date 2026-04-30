@@ -681,8 +681,8 @@ class NephroCAGEDataset(Dataset):
         )
 
         if patient_ids is not None:
-            selected_patient_ids = set(patient_ids)
-            valid_patient_ids = np.asarray([pid for pid in valid_patient_ids if pid in selected_patient_ids])
+            valid_patient_id_set = set(valid_patient_ids)
+            valid_patient_ids = np.asarray([pid for pid in patient_ids if pid in valid_patient_id_set])
 
         # Filter self.static_df, self.labels, and self.ts_data to include only valid_patient_ids
         self.static_df = self.static_df[self.static_df['patient_id'].isin(valid_patient_ids)].copy()
@@ -702,8 +702,8 @@ class NephroCAGEDataset(Dataset):
         self.scaler = self.preprocessing_artifacts.static_scaler
         self.ts_scaler = self.preprocessing_artifacts.ts_scaler
 
-        # Get unique patient_ids
-        self.patient_ids = self.static_df['patient_id'].unique().astype(int)
+        # Preserve the explicit split order so dataloader row indices are stable.
+        self.patient_ids = np.asarray(valid_patient_ids).astype(int)
         if len(self.patient_ids) != len(self.static_df):
             raise ValueError("Duplicate patients in static df")
 
