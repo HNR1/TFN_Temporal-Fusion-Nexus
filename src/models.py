@@ -231,9 +231,14 @@ class MultiModalVAE(nn.Module):
             notes_embeddings = F.relu(self.downproj(notes_embeddings))
 
             padding_notes_mask = None
+            has_valid_note = None
             if notes_mask is not None:
                 # For MultiheadAttention, key_padding_mask is (B, S) with True=ignore
                 padding_notes_mask = ~notes_mask.bool()
+                has_valid_note = notes_mask.bool().any(dim=1)
+                if (~has_valid_note).any():
+                    padding_notes_mask = padding_notes_mask.clone()
+                    padding_notes_mask[~has_valid_note, 0] = False
 
             attn_mask = None
             has_valid_causal_note = None
@@ -266,6 +271,15 @@ class MultiModalVAE(nn.Module):
                         attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(-1).to(attn_weights_notes.dtype)
                     elif attn_weights_notes.dim() == 4:
                         attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(1).unsqueeze(-1).to(attn_weights_notes.dtype)
+            elif has_valid_note is not None and (~has_valid_note).any():
+                valid_rows = has_valid_note.view(-1, 1, 1).to(attn_output.dtype)
+                attn_output = attn_output * valid_rows
+
+                if attn_weights_notes is not None:
+                    if attn_weights_notes.dim() == 3:
+                        attn_weights_notes = attn_weights_notes * has_valid_note.view(-1, 1, 1).to(attn_weights_notes.dtype)
+                    elif attn_weights_notes.dim() == 4:
+                        attn_weights_notes = attn_weights_notes * has_valid_note.view(-1, 1, 1, 1).to(attn_weights_notes.dtype)
 
             lstm_out = self.layer_norm(lstm_out + attn_output)
 
@@ -342,9 +356,14 @@ class MultiModal(nn.Module):
             notes_embeddings = F.relu(self.downproj(notes_embeddings))
 
             padding_notes_mask = None
+            has_valid_note = None
             if notes_mask is not None:
                 # For MultiheadAttention, key_padding_mask is (B, S) with True=ignore
                 padding_notes_mask = ~notes_mask.bool()
+                has_valid_note = notes_mask.bool().any(dim=1)
+                if (~has_valid_note).any():
+                    padding_notes_mask = padding_notes_mask.clone()
+                    padding_notes_mask[~has_valid_note, 0] = False
 
             attn_mask = None
             has_valid_causal_note = None
@@ -377,6 +396,15 @@ class MultiModal(nn.Module):
                         attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(-1).to(attn_weights_notes.dtype)
                     elif attn_weights_notes.dim() == 4:
                         attn_weights_notes = attn_weights_notes * has_valid_causal_note.unsqueeze(1).unsqueeze(-1).to(attn_weights_notes.dtype)
+            elif has_valid_note is not None and (~has_valid_note).any():
+                valid_rows = has_valid_note.view(-1, 1, 1).to(attn_output.dtype)
+                attn_output = attn_output * valid_rows
+
+                if attn_weights_notes is not None:
+                    if attn_weights_notes.dim() == 3:
+                        attn_weights_notes = attn_weights_notes * has_valid_note.view(-1, 1, 1).to(attn_weights_notes.dtype)
+                    elif attn_weights_notes.dim() == 4:
+                        attn_weights_notes = attn_weights_notes * has_valid_note.view(-1, 1, 1, 1).to(attn_weights_notes.dtype)
 
             lstm_out = self.layer_norm(lstm_out + attn_output)
 
