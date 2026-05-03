@@ -37,17 +37,19 @@ NephroCAGE is not available publicly. We ustilised NephroCAGE v1 raw files under
   - `get_dfs(project_path)` loads all raw tables.
   - `create_static_df`, `create_vitals_df`, `create_medication_df`, `create_notes_df` clean each modality.
   - `create_ts_data` merges vitals/labs/meds, computes eGFR, and aligns timelines.
-  - `NephroCAGEDataset` packages static + time-series + note embeddings with masks; `collate_fn` pads variable-length batches.
+  - `get_valid_patient_ids`, `split_patient_ids`, and `create_dataset_splits` build patient-level train/val/test splits before fitting preprocessors.
+  - `NephroCAGEDataset` packages static + time-series + note embeddings with masks and can reuse train-fitted preprocessing artifacts for val/test; `collate_fn` pads variable-length batches.
 - `CONFIG` in `src/config.py` lists static categorical/numerical features, time-series features, padding value, and model dimensions.
 
 ## Modeling Overview
 - Time-series backbone: `TimeAwareLSTM` (elapsed-time aware) with optional temporal self-attention (`TimeAwareAttentionEncoder`) or a vanilla LSTM encoder.
+- Feature-level missingness: `value_mask` is carried through batching and can be used at model input time to mark missing values within real timesteps separately from batch padding.
 - Static fusion: `StaticEncoder` embeds categorical + scaled numerical features and injects them into hidden states.
 - Notes fusion: `NotesEncoder` (GTE-large) with cross-attention for time steps to attend to note embeddings.
 - Heads: `MultiModal` for deterministic forecasting; `MultiModalVAE` for variational modeling; `SimpleMLP` for lightweight classification.
 
 ## Training and Evaluation
-- Main flows: `training.ipynb` (multimodal forecasting/classification) and `vae_training.ipynb` (generative).
+- Main flows: `training.ipynb` (multimodal discriminative) and `vae_training.ipynb` (generative).
 - Extras: `classification.ipynb` + `classification_calibration.ipynb` (risk and calibration), `clustering.ipynb` (latent analysis), `interpret.ipynb` (feature importance/SHAP), `visualizations.ipynb` + `results.ipynb` (plots/metrics), `study.ipynb` (user study summaries).
 - Aggregated AUROCs by horizon are stored in `data/results/final_res.json`; other experiment variants are in `data/results/*.json`.
 
