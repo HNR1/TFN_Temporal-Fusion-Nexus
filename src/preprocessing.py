@@ -545,7 +545,17 @@ def create_dataset_splits(
     patient_ids: Optional[Sequence] = None,
     min_ts_count: int = 10,
     require_notes: bool = True,
+    skip_split: bool = False,
 ) -> dict[str, object]:
+    """
+    Create train/val/test dataset splits with optional patient filtering.
+    
+    Args:
+        patient_ids: If provided, filter to only these patient IDs.
+                    Use for pool-based training (e.g., backbone on pool_a, adapter on pool_b).
+        skip_split: If True, returns all filtered patients as 'train' dataset (no 80/20 split).
+                   Use when training adapters on pool_b or evaluating on pool_c.
+    """
     eligible_patient_ids = get_valid_patient_ids(
         static_df=static_df,
         ts_data=ts_data,
@@ -565,14 +575,23 @@ def create_dataset_splits(
             rng.shuffle(eligible_patient_ids)
         eligible_patient_ids = eligible_patient_ids[:max_patients]
 
-    split_ids = split_patient_ids(
-        patient_ids=eligible_patient_ids,
-        train_size=train_size,
-        val_size=val_size,
-        test_size=test_size,
-        random_state=random_state,
-        shuffle=shuffle,
-    )
+    if skip_split:
+        # For pool assignment workflows: return all patients as 'train', no split
+        split_ids = {
+            'train': eligible_patient_ids,
+            'val': np.array([], dtype=eligible_patient_ids.dtype),
+            'test': np.array([], dtype=eligible_patient_ids.dtype),
+        }
+    else:
+        # Standard 80/20 train/test split (or 80/10/10 with val)
+        split_ids = split_patient_ids(
+            patient_ids=eligible_patient_ids,
+            train_size=train_size,
+            val_size=val_size,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+        )
 
     train_dataset = NephroCAGEDataset(
         static_df=static_df,
