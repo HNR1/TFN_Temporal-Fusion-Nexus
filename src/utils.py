@@ -29,6 +29,30 @@ def compute_mutual_information_appr(x, y):
     return mi
 
 
+def build_elapsed_times(timesteps, mask=None):
+    """
+    Build elapsed times aligned to each timestep.
+
+    The first valid timestep has elapsed time 0. Subsequent valid timesteps get
+    the gap from the previous timestep. Padded positions are zeroed.
+    """
+    if timesteps.dim() != 2:
+        raise ValueError(f"timesteps must have shape (B, T), got {timesteps.shape}")
+
+    elapsed = torch.zeros_like(timesteps, dtype=torch.float32)
+    if timesteps.size(1) > 1:
+        elapsed[:, 1:] = timesteps[:, 1:].float() - timesteps[:, :-1].float()
+
+    elapsed = torch.nan_to_num(elapsed, nan=0.0, posinf=1e6, neginf=0.0).clamp_min(0.0)
+
+    if mask is not None:
+        if mask.shape != timesteps.shape:
+            raise ValueError(f"mask shape {mask.shape} does not match timesteps shape {timesteps.shape}")
+        elapsed = elapsed.masked_fill(~mask.bool(), 0.0)
+
+    return elapsed
+
+
 def get_last_valid_step(sequence, mask=None):
     """
     Gather the last non-padded timestep for each sequence in the batch.

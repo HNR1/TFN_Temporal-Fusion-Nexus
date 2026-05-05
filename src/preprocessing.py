@@ -1,6 +1,7 @@
 import pandas as pd
 import numpy as np
 import os
+import json
 from dataclasses import dataclass
 from typing import Optional, Sequence
 
@@ -529,6 +530,99 @@ def split_patient_ids(patient_ids: Sequence, train_size: float = 0.8, val_size: 
         'val': val_ids,
         'test': test_ids,
     }
+
+
+def get_or_create_global_split(
+    patient_ids: Sequence,
+    split_json_path: str,
+    train_size: float = 0.7,
+    val_size: float = 0.1,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    shuffle: bool = True,
+    force_recreate: bool = False,
+) -> dict[str, np.ndarray]:
+    """
+    Load one persisted split from disk, or create and save it if missing.
+    This guarantees consistent train/val/test IDs across notebooks.
+    """
+    patient_ids = np.asarray(patient_ids)
+    if patient_ids.ndim != 1:
+        raise ValueError("patient_ids must be one-dimensional")
+    if len(patient_ids) == 0:
+        raise ValueError("No patient_ids available for splitting")
+
+    split_json_path = os.path.abspath(split_json_path)
+    split_dir = os.path.dirname(split_json_path)
+
+    expected_ids = set(patient_ids.tolist())
+
+    def _validate_loaded_split(loaded_split: dict[str, np.ndarray]) -> None:
+        train_ids = set(loaded_split['train'].tolist())
+        val_ids = set(loaded_split['val'].tolist())
+        test_ids = set(loaded_split['test'].tolist())
+
+        if not train_ids.isdisjoint(val_ids):
+            raise ValueError("Persisted split is invalid: train overlaps val")
+        if not train_ids.isdisjoint(test_ids):
+            raise ValueError("Persisted split is invalid: train overlaps test")
+        if not val_ids.isdisjoint(test_ids):
+            raise ValueError("Persisted split is invalid: val overlaps test")
+
+        persisted_union = train_ids | val_ids | test_ids
+        if persisted_union != expected_ids:
+            missing_ids = expected_ids - persisted_union
+            extra_ids = persisted_union - expected_ids
+            raise ValueError(
+                "Persisted split IDs do not match current selected cohort. "
+                f"missing={len(missing_ids)}, extra={len(extra_ids)}. "
+                "Set force_recreate=True to regenerate this split file."
+            )
+
+    if os.path.exists(split_json_path) and not force_recreate:
+        with open(split_json_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        for key in ('train', 'val', 'test'):
+            if key not in payload:
+                raise ValueError(f"Persisted split file is missing key: {key}")
+
+        loaded_split = {
+            'train': np.asarray(payload['train']),
+            'val': np.asarray(payload['val']),
+            'test': np.asarray(payload['test']),
+        }
+        _validate_loaded_split(loaded_split)
+        return loaded_split
+
+    split_ids = split_patient_ids(
+        patient_ids=patient_ids,
+        train_size=train_size,
+        val_size=val_size,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=shuffle,
+    )
+
+    payload = {
+        'train': split_ids['train'].tolist(),
+        'val': split_ids['val'].tolist(),
+        'test': split_ids['test'].tolist(),
+        'meta': {
+            'train_size': float(train_size),
+            'val_size': float(val_size),
+            'test_size': float(test_size),
+            'random_state': int(random_state),
+            'shuffle': bool(shuffle),
+            'n_selected_patients': int(len(patient_ids)),
+        },
+    }
+    if split_dir:
+        os.makedirs(split_dir, exist_ok=True)
+    with open(split_json_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=True, indent=2)
+
+    return split_ids
 
 
 def create_dataset_splits(

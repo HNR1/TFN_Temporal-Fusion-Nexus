@@ -408,44 +408,47 @@ class TimeAwareAttentionEncoder(nn.Module):
         x: Input sequence of shape (batch_size, seq_length, input_size)
         elapsed_times: Elapsed times of shape (batch_size, seq_length)
         """
-        # Get hidden states from TimeAwareLSTM, can also be a VanillaLSTM, then elapsed times are not used 
+        elapsed_times = torch.nan_to_num(
+            elapsed_times.to(device=x.device, dtype=x.dtype),
+            nan=0.0,
+            posinf=1e6,
+            neginf=0.0,
+        ).clamp_min(0.0)
+
+        if mask is not None:
+            mask = mask.bool().to(device=x.device)
+            elapsed_times = elapsed_times.masked_fill(~mask, 0.0)
+
         lstm_out, (hn, cn) = self.lstm(x, elapsed_times)
-        # lstm_out: (batch size, sequence length, hidden_size), hidden state for each timestep from last layer
         batch_size, seq_len, _ = lstm_out.size()
 
-        # True = ignore
-        causal_mask = torch.triu(torch.ones(seq_len, seq_len), diagonal=1).bool().to(x.device)
-        
         key_padding_mask = None
         if mask is not None:
-            # mask: True=valid, False=pad -> key_padding_mask: True=ignore, False=keep
             key_padding_mask = ~mask.bool()
-            
-        # Apply temporal attention
-        # If we do not want temporal attention, just return lstm_out
+            all_masked = key_padding_mask.all(dim=1)
+            if all_masked.any():
+                key_padding_mask = key_padding_mask.clone()
+                key_padding_mask[all_masked, 0] = False
+            lstm_out = lstm_out.masked_fill(~mask.unsqueeze(-1), 0.0)
+
         attn_weights = None
         if self.use_temporal_attention:
-            # By setting is_causal=True, MultiheadAttention enforces causal masking internally.
-            # It will also merge key_padding_mask with the causal mask if provided.
             attn_output, attn_weights = self.attention(
                 query=lstm_out,
                 key=lstm_out,
                 value=lstm_out,
                 key_padding_mask=key_padding_mask,
                 need_weights=True,
-                average_attn_weights=True, # averages weights across heads (default) 
-                attn_mask=causal_mask,
-                is_causal=True, # should create a causal mask and merge with key padding mask
+                average_attn_weights=True,
+                is_causal=True,
             )
-            # attn_output: for each timestep weighted sum of all lstm_outs by attending to them
-            #lstm_out = attn_output
             lstm_out = self.layer_norm_1(lstm_out + attn_output)
             ff_out = self.ff(lstm_out)
             lstm_out = self.layer_norm_2(lstm_out + ff_out)
-            
-        # if temporal attention is used lstm out is the ouputs from LSTM with self-attention else it is the raw lstm outputs
-        # if temporal attention is not used the weights will be None
-        # lstm_out: (batch size, sequence length, hidden_size)
+
+            if mask is not None:
+                lstm_out = lstm_out.masked_fill(~mask.unsqueeze(-1), 0.0)
+
         return lstm_out, attn_weights
 
 class TimeAwareEncoder(nn.Module):
@@ -487,8 +490,8 @@ class TimeAwareLSTM(nn.Module):
 
         # Initialize hidden and cell states if not provided
         if initial_states is None:
-            h_t = [torch.zeros(batch_size, self.hidden_size, device=device) for _ in range(self.num_layers)]
-            c_t = [torch.zeros(batch_size, self.hidden_size, device=device) for _ in range(self.num_layers)]
+            h_t = [input_seq.new_zeros(batch_size, self.hidden_size) for _ in range(self.num_layers)]
+            c_t = [input_seq.new_zeros(batch_size, self.hidden_size) for _ in range(self.num_layers)]
         else:
             h_t, c_t = zip(*[(h, c) for h, c in initial_states])
 
@@ -567,16 +570,17 @@ class TLSTMCell(nn.Module):
         Maps elapsed time t -> T.
         logic:
             T = 1 / log(t + e)
-        We'll clamp t to avoid log(0).
         t shape: (batch_size, 1)
         returns shape: (batch_size, hidden_size)
         """
-        # clamp to avoid negative or zero times
-        t_clamped = torch.clamp(t, min=0.0)
-        # for numerical stability, add a small value inside the log
+        t = torch.nan_to_num(
+            t.to(dtype=self.W_decomp.dtype),
+            nan=0.0,
+            posinf=1e6,
+            neginf=0.0,
+        )
+        t_clamped = torch.clamp(t, min=0.0, max=1e6)
         T = 1.0 / torch.log(t_clamped + 2.7183)
-        # expand T to match cell dimension
-        # shape => (batch_size, hidden_size)
         T = T.repeat(1, self.hidden_size)
         return T
 
