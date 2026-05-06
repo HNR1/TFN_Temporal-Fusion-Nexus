@@ -431,6 +431,8 @@ class TimeAwareAttentionEncoder(nn.Module):
                 key_padding_mask[all_masked, 0] = False
             lstm_out = lstm_out.masked_fill(~mask.unsqueeze(-1), 0.0)
 
+        causal_mask = torch.triu(torch.ones(seq_len, seq_len, device=x.device), diagonal=1).bool()
+
         attn_weights = None
         if self.use_temporal_attention:
             attn_output, attn_weights = self.attention(
@@ -440,7 +442,7 @@ class TimeAwareAttentionEncoder(nn.Module):
                 key_padding_mask=key_padding_mask,
                 need_weights=True,
                 average_attn_weights=True,
-                is_causal=True,
+                attn_mask=causal_mask,
             )
             lstm_out = self.layer_norm_1(lstm_out + attn_output)
             ff_out = self.ff(lstm_out)
