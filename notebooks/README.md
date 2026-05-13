@@ -8,31 +8,11 @@ Pipeline order for reproducing results end-to-end. Each step depends on the prev
 
 1. Model checkpointing is used in training.ipynb and classification.ipynb. The best-performing fold's model is saved for each task/horizon combo. The calibration notebook loads these checkpoints to evaluate and calibrate the probabilities.
 
-2. Training is done on 90% dataset with 10% val used for model checkpointing. Classification uses 80% train, 20% test splits.
+2. Training is done on 80% dataset with 20% reserved for testing of the classfication heads. Inside the 80% , 10% is used for model checkpointing. Similarly, the 5-fold CV for the classification heads is done only on the 80% dataset. The final evaluation of the classification heads is done on the held-out 20% test set. AUC scores are given for both the CV and the test set in the classification notebook. 
 
-3. Training is a self-supervised next-timestep prediction task. Classification heads are trained separately on frozen backbone representations.
+3. training.ipynb gives the backbone. Classification.ipynb the heads. 
 
-## Metrics:
-
-### Original Paper (5 Fold CV):
-
-
-| Event | 30-day | 90-day | 180-day |
-|---|---|---|---|
-| **GraftLoss** | 0.962 ± 0.006 | 0.965 ± 0.011 | 0.962 ± 0.009 |
-| **Rejection** | 0.844 ± 0.012 | 0.847 ± 0.013 | 0.849 ± 0.010 |
-| **Mortality** | 0.860 ± 0.010 | 0.859 ± 0.011 | 0.851 ± 0.013 |
-
-### This code (5 Fold CV - 2782 patients in Pool A):
-
-*CV Mean AUC (averaged across 5 folds):*
-
-| Event | 30-day | 90-day | 180-day |
-|---|---|---|---|
-| **GraftLoss** | 0.9480 ± 0.0201 | 0.9196 ± 0.0321 | 0.9027 ± 0.0247 |
-| **Rejection** | 0.8919 ± 0.0203 | 0.8691 ± 0.0243 | 0.8528 ± 0.0345 |
-| **Mortality** | 0.9241 ± 0.0157 | 0.9088 ± 0.0102 | 0.8741 ± 0.0124 |
-
+4. data/splits contains jsons about different splits of the data. You can use them if you want to split your data in specific way. Splitting is done in dataset_pool_assignment.ipynb. Splitting is currently random and according to some parameters but you can modify the logic as you see fit. 
 
 ## Step 0: Environment Setup
 
