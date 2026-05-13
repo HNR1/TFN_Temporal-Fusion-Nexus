@@ -1,6 +1,9 @@
 import pandas as pd
 import numpy as np
 import os
+import json
+from dataclasses import dataclass
+from typing import Optional, Sequence
 
 import torch
 import torch.nn as nn
@@ -14,6 +17,14 @@ from sklearn.impute import SimpleImputer
 from config import CONFIG
 
 # Preprocessing for the NephroCAGE dataset v1
+
+
+@dataclass
+class PreprocessingArtifacts:
+    label_encoders: dict[str, LabelEncoder]
+    categorical_cardinalities: list[int]
+    static_scaler: StandardScaler
+    ts_scaler: StandardScaler
 
 files = {
         'baseline_parameters': '1_BAseline_parameter_fertig2_HLA_Pirche_final.xlsx',
@@ -470,55 +481,301 @@ def create_ts_data(vitals_ca, vitals_lab=None, medication=None, merge_lab=True, 
     return ts_data
 
 
+def get_valid_patient_ids(static_df: pd.DataFrame, ts_data: pd.DataFrame, notes_df: pd.DataFrame, min_ts_count: int = 10, require_notes: bool = True) -> np.ndarray:
+    ordered_patient_ids = static_df['patient_id'].dropna().drop_duplicates().tolist()
+    ts_counts = ts_data.groupby('patient_id').size().to_dict()
+    notes_counts = notes_df.groupby('patient_id').size().to_dict()
+
+    valid_patient_ids = []
+    for patient_id in ordered_patient_ids:
+        if ts_counts.get(patient_id, 0) < min_ts_count:
+            continue
+        if require_notes and notes_counts.get(patient_id, 0) == 0:
+            continue
+        valid_patient_ids.append(patient_id)
+
+    return np.asarray(valid_patient_ids)
+
+
+def split_patient_ids(patient_ids: Sequence, train_size: float = 0.8, val_size: float = 0.0, test_size: float = 0.2, random_state: int = 42, shuffle: bool = True) -> dict[str, np.ndarray]:
+    patient_ids = np.asarray(patient_ids)
+    if patient_ids.ndim != 1:
+        raise ValueError("patient_ids must be one-dimensional")
+    if len(patient_ids) == 0:
+        raise ValueError("No patient_ids available for splitting")
+
+    total = train_size + val_size + test_size
+    if not np.isclose(total, 1.0):
+        raise ValueError("train_size + val_size + test_size must equal 1.0")
+
+    split_ids = patient_ids.copy()
+    if shuffle:
+        rng = np.random.default_rng(random_state)
+        rng.shuffle(split_ids)
+
+    n_total = len(split_ids)
+    n_test = 0 if test_size == 0 else max(1, int(round(test_size * n_total)))
+    n_val = 0 if val_size == 0 else max(1, int(round(val_size * n_total)))
+    if n_test + n_val >= n_total:
+        raise ValueError("Split sizes leave no patients for the training set")
+
+    n_train = n_total - n_val - n_test
+
+    train_ids = split_ids[:n_train]
+    val_ids = split_ids[n_train:n_train + n_val]
+    test_ids = split_ids[n_train + n_val:]
+
+    return {
+        'train': train_ids,
+        'val': val_ids,
+        'test': test_ids,
+    }
+
+
+def get_or_create_global_split(
+    patient_ids: Sequence,
+    split_json_path: str,
+    train_size: float = 0.7,
+    val_size: float = 0.1,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    shuffle: bool = True,
+    force_recreate: bool = False,
+) -> dict[str, np.ndarray]:
+    """
+    Load one persisted split from disk, or create and save it if missing.
+    This guarantees consistent train/val/test IDs across notebooks.
+    """
+    patient_ids = np.asarray(patient_ids)
+    if patient_ids.ndim != 1:
+        raise ValueError("patient_ids must be one-dimensional")
+    if len(patient_ids) == 0:
+        raise ValueError("No patient_ids available for splitting")
+
+    split_json_path = os.path.abspath(split_json_path)
+    split_dir = os.path.dirname(split_json_path)
+
+    expected_ids = set(patient_ids.tolist())
+
+    def _validate_loaded_split(loaded_split: dict[str, np.ndarray]) -> None:
+        train_ids = set(loaded_split['train'].tolist())
+        val_ids = set(loaded_split['val'].tolist())
+        test_ids = set(loaded_split['test'].tolist())
+
+        if not train_ids.isdisjoint(val_ids):
+            raise ValueError("Persisted split is invalid: train overlaps val")
+        if not train_ids.isdisjoint(test_ids):
+            raise ValueError("Persisted split is invalid: train overlaps test")
+        if not val_ids.isdisjoint(test_ids):
+            raise ValueError("Persisted split is invalid: val overlaps test")
+
+        persisted_union = train_ids | val_ids | test_ids
+        if persisted_union != expected_ids:
+            missing_ids = expected_ids - persisted_union
+            extra_ids = persisted_union - expected_ids
+            raise ValueError(
+                "Persisted split IDs do not match current selected cohort. "
+                f"missing={len(missing_ids)}, extra={len(extra_ids)}. "
+                "Set force_recreate=True to regenerate this split file."
+            )
+
+    if os.path.exists(split_json_path) and not force_recreate:
+        with open(split_json_path, 'r', encoding='utf-8') as f:
+            payload = json.load(f)
+
+        for key in ('train', 'val', 'test'):
+            if key not in payload:
+                raise ValueError(f"Persisted split file is missing key: {key}")
+
+        loaded_split = {
+            'train': np.asarray(payload['train']),
+            'val': np.asarray(payload['val']),
+            'test': np.asarray(payload['test']),
+        }
+        _validate_loaded_split(loaded_split)
+        return loaded_split
+
+    split_ids = split_patient_ids(
+        patient_ids=patient_ids,
+        train_size=train_size,
+        val_size=val_size,
+        test_size=test_size,
+        random_state=random_state,
+        shuffle=shuffle,
+    )
+
+    payload = {
+        'train': split_ids['train'].tolist(),
+        'val': split_ids['val'].tolist(),
+        'test': split_ids['test'].tolist(),
+        'meta': {
+            'train_size': float(train_size),
+            'val_size': float(val_size),
+            'test_size': float(test_size),
+            'random_state': int(random_state),
+            'shuffle': bool(shuffle),
+            'n_selected_patients': int(len(patient_ids)),
+        },
+    }
+    if split_dir:
+        os.makedirs(split_dir, exist_ok=True)
+    with open(split_json_path, 'w', encoding='utf-8') as f:
+        json.dump(payload, f, ensure_ascii=True, indent=2)
+
+    return split_ids
+
+
+def create_dataset_splits(
+    static_df: pd.DataFrame,
+    ts_data: pd.DataFrame,
+    notes_df: pd.DataFrame,
+    biopsy_df: pd.DataFrame,
+    train_size: float = 0.8,
+    val_size: float = 0.0,
+    test_size: float = 0.2,
+    random_state: int = 42,
+    shuffle: bool = True,
+    max_patients: Optional[int] = None,
+    patient_ids: Optional[Sequence] = None,
+    min_ts_count: int = 10,
+    require_notes: bool = True,
+    skip_split: bool = False,
+) -> dict[str, object]:
+    """
+    Create train/val/test dataset splits with optional patient filtering.
+    
+    Args:
+        patient_ids: If provided, filter to only these patient IDs.
+                    Use for pool-based training (e.g., backbone on pool_a, adapter on pool_b).
+        skip_split: If True, returns all filtered patients as 'train' dataset (no 80/20 split).
+                   Use when training adapters on pool_b or evaluating on pool_c.
+    """
+    eligible_patient_ids = get_valid_patient_ids(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+
+    if patient_ids is not None:
+        allowed_patient_ids = set(patient_ids)
+        eligible_patient_ids = np.asarray([pid for pid in eligible_patient_ids if pid in allowed_patient_ids])
+
+    if max_patients is not None and len(eligible_patient_ids) > max_patients:
+        if shuffle:
+            rng = np.random.default_rng(random_state)
+            eligible_patient_ids = eligible_patient_ids.copy()
+            rng.shuffle(eligible_patient_ids)
+        eligible_patient_ids = eligible_patient_ids[:max_patients]
+
+    if skip_split:
+        # For pool assignment workflows: return all patients as 'train', no split
+        split_ids = {
+            'train': eligible_patient_ids,
+            'val': np.array([], dtype=eligible_patient_ids.dtype),
+            'test': np.array([], dtype=eligible_patient_ids.dtype),
+        }
+    else:
+        # Standard 80/20 train/test split (or 80/10/10 with val)
+        split_ids = split_patient_ids(
+            patient_ids=eligible_patient_ids,
+            train_size=train_size,
+            val_size=val_size,
+            test_size=test_size,
+            random_state=random_state,
+            shuffle=shuffle,
+        )
+
+    train_dataset = NephroCAGEDataset(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        biopsy_df=biopsy_df,
+        patient_ids=split_ids['train'],
+        fit_preprocessing=True,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+    preprocessing_artifacts = train_dataset.preprocessing_artifacts
+
+    val_dataset = None
+    if len(split_ids['val']) > 0:
+        val_dataset = NephroCAGEDataset(
+            static_df=static_df,
+            ts_data=ts_data,
+            notes_df=notes_df,
+            biopsy_df=biopsy_df,
+            patient_ids=split_ids['val'],
+            preprocessing_artifacts=preprocessing_artifacts,
+            fit_preprocessing=False,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
+
+    test_dataset = None
+    if len(split_ids['test']) > 0:
+        test_dataset = NephroCAGEDataset(
+            static_df=static_df,
+            ts_data=ts_data,
+            notes_df=notes_df,
+            biopsy_df=biopsy_df,
+            patient_ids=split_ids['test'],
+            preprocessing_artifacts=preprocessing_artifacts,
+            fit_preprocessing=False,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
+
+    full_dataset = NephroCAGEDataset(
+        static_df=static_df,
+        ts_data=ts_data,
+        notes_df=notes_df,
+        biopsy_df=biopsy_df,
+        patient_ids=eligible_patient_ids,
+        preprocessing_artifacts=preprocessing_artifacts,
+        fit_preprocessing=False,
+        min_ts_count=min_ts_count,
+        require_notes=require_notes,
+    )
+
+    return {
+        'train': train_dataset,
+        'val': val_dataset,
+        'test': test_dataset,
+        'full': full_dataset,
+        'patient_ids': {
+            'selected': eligible_patient_ids,
+            **split_ids,
+        },
+        'preprocessing_artifacts': preprocessing_artifacts,
+    }
+
+
 class NephroCAGEDataset(Dataset):
-    def __init__(self, static_df: pd.DataFrame, ts_data: pd.DataFrame, notes_df: pd.DataFrame, biopsy_df: pd.DataFrame):
+    def __init__(
+        self,
+        static_df: pd.DataFrame,
+        ts_data: pd.DataFrame,
+        notes_df: pd.DataFrame,
+        biopsy_df: pd.DataFrame,
+        patient_ids: Optional[Sequence] = None,
+        preprocessing_artifacts: Optional[PreprocessingArtifacts] = None,
+        fit_preprocessing: bool = True,
+        min_ts_count: int = 10,
+        require_notes: bool = True,
+    ):
+        if not fit_preprocessing and preprocessing_artifacts is None:
+            raise ValueError("preprocessing_artifacts must be provided when fit_preprocessing is False")
 
         self.static_df = static_df.copy()
+        self.ts_data = ts_data.copy()
+        self.notes_df = notes_df.copy()  # Included as a separate dataframe
 
         # create graft loss labels
         self.labels = self.static_df[['patient_id', 'loss_rel_days', 'death_rel_days']].copy()
         self.labels['graft_loss_label'] = self.labels['loss_rel_days'].notna().astype(int)
         self.labels['death_label'] = self.labels['death_rel_days'].notna().astype(int)
-
-        # Handle missing values in static df
-        # Use -1/Unknown to indicate missing value
-        for col in CONFIG['static_numerical_cols']:
-            self.static_df[col] = self.static_df[col].fillna(-1)
-            #median = self.static_df[col].median()
-            #self.static_df[col] = self.static_df[col].fillna(median)
-        for col in CONFIG['static_categorical_cols']:
-            self.static_df[col] = self.static_df[col].fillna('Unknown')
-
-        # Encode categorical variables
-        self.label_encoders = {}
-        for col in CONFIG['static_categorical_cols']:
-            le = LabelEncoder()
-            self.static_df[col] = le.fit_transform(self.static_df[col])
-            self.label_encoders[col] = le
-
-        self.categorical_cardinalities = [
-            len(le.classes_) for le in self.label_encoders.values()
-        ]
-
-        # Normalize numerical variables
-        self.scaler = StandardScaler()
-        self.static_df[CONFIG['static_numerical_cols']] = self.scaler.fit_transform(
-            self.static_df[CONFIG['static_numerical_cols']]
-        )
-
-        self.ts_data = ts_data.copy()
-        # value mask for time series data
-        self.ts_data_value_mask = self.ts_data[['patient_id', 'rel_days']].copy()
-        self.ts_data_value_mask[CONFIG['ts_features']] = (~self.ts_data[CONFIG['ts_features']].isna()).astype(int)
-
-        # replace NaNs with padding value
-        self.ts_data[CONFIG['ts_features']] = self.ts_data[CONFIG['ts_features']].fillna(CONFIG['PADDING_VAL'])
-
-        # Normalize
-        self.ts_scaler = StandardScaler()
-        self.ts_data[CONFIG['ts_features']] = self.ts_scaler.fit_transform(self.ts_data[CONFIG['ts_features']])
-
-        self.notes_df = notes_df.copy()  # Included as a separate dataframe
 
         # Compute rejection label by BANFF categories 2 and 4
         biopsy_df['Banff 17 categorie'] = pd.to_numeric(biopsy_df['Banff 17 categorie'], errors='coerce')
@@ -527,16 +784,18 @@ class NephroCAGEDataset(Dataset):
         
         # Convert to dictionary: { patient_id: [day1, day2, ...] }
         self.rej_dict = dict(zip(grouped_rejections['PatientID'], grouped_rejections['rej_rel_days_list']))
-        
-        ts_counts = self.ts_data.groupby('patient_id').size().reset_index(name='counts')
-        valid_patient_ids = ts_counts[ts_counts['counts'] >= 10]['patient_id'].unique()
 
-        notes_counts = self.notes_df.groupby('patient_id').size().reset_index(name='counts')
-        valid_patient_ids_with_notes = notes_counts[notes_counts['counts'] > 0]['patient_id'].unique()
+        valid_patient_ids = get_valid_patient_ids(
+            static_df=self.static_df,
+            ts_data=self.ts_data,
+            notes_df=self.notes_df,
+            min_ts_count=min_ts_count,
+            require_notes=require_notes,
+        )
 
-        # Intersect with the already-valid patients above
-        valid_patient_ids = set(valid_patient_ids).intersection(valid_patient_ids_with_notes)
-        valid_patient_ids = np.array(list(valid_patient_ids))  # turn back to NumPy array
+        if patient_ids is not None:
+            selected_patient_ids = set(patient_ids)
+            valid_patient_ids = np.asarray([pid for pid in valid_patient_ids if pid in selected_patient_ids])
 
         # Filter self.static_df, self.labels, and self.ts_data to include only valid_patient_ids
         self.static_df = self.static_df[self.static_df['patient_id'].isin(valid_patient_ids)].copy()
@@ -544,10 +803,85 @@ class NephroCAGEDataset(Dataset):
         self.ts_data = self.ts_data[self.ts_data['patient_id'].isin(valid_patient_ids)].copy()
         self.notes_df = self.notes_df[self.notes_df['patient_id'].isin(valid_patient_ids)].copy()
 
+        if fit_preprocessing:
+            self.preprocessing_artifacts = self._fit_preprocessing()
+        else:
+            self.preprocessing_artifacts = preprocessing_artifacts
+
+        self._apply_preprocessing(self.preprocessing_artifacts)
+
+        self.label_encoders = self.preprocessing_artifacts.label_encoders
+        self.categorical_cardinalities = self.preprocessing_artifacts.categorical_cardinalities
+        self.scaler = self.preprocessing_artifacts.static_scaler
+        self.ts_scaler = self.preprocessing_artifacts.ts_scaler
+
         # Get unique patient_ids
         self.patient_ids = self.static_df['patient_id'].unique().astype(int)
         if len(self.patient_ids) != len(self.static_df):
             raise ValueError("Duplicate patients in static df")
+
+    def _fit_preprocessing(self) -> PreprocessingArtifacts:
+        static_train = self.static_df.copy()
+        for col in CONFIG['static_numerical_cols']:
+            static_train[col] = static_train[col].fillna(-1)
+        for col in CONFIG['static_categorical_cols']:
+            static_train[col] = static_train[col].fillna('Unknown').astype(str)
+
+        label_encoders = {}
+        for col in CONFIG['static_categorical_cols']:
+            le = LabelEncoder()
+            train_values = static_train[col]
+            if 'Unknown' not in set(train_values):
+                train_values = pd.concat([train_values, pd.Series(['Unknown'])], ignore_index=True)
+            le.fit(train_values)
+            label_encoders[col] = le
+
+        static_scaler = StandardScaler()
+        static_scaler.fit(static_train[CONFIG['static_numerical_cols']])
+
+        # Fit the time-series scaler on the raw train values so NaNs do not distort the moments.
+        ts_scaler = StandardScaler()
+        ts_scaler.fit(self.ts_data[CONFIG['ts_features']])
+
+        categorical_cardinalities = [
+            len(label_encoders[col].classes_) for col in CONFIG['static_categorical_cols']
+        ]
+
+        return PreprocessingArtifacts(
+            label_encoders=label_encoders,
+            categorical_cardinalities=categorical_cardinalities,
+            static_scaler=static_scaler,
+            ts_scaler=ts_scaler,
+        )
+
+    def _apply_preprocessing(self, preprocessing_artifacts: PreprocessingArtifacts) -> None:
+        for col in CONFIG['static_numerical_cols']:
+            self.static_df[col] = self.static_df[col].fillna(-1)
+        for col in CONFIG['static_categorical_cols']:
+            self.static_df[col] = self.static_df[col].fillna('Unknown').astype(str)
+
+        for col, label_encoder in preprocessing_artifacts.label_encoders.items():
+            known_classes = set(label_encoder.classes_)
+            values = self.static_df[col].where(self.static_df[col].isin(known_classes), 'Unknown')
+            self.static_df[col] = label_encoder.transform(values)
+
+        static_scaled = pd.DataFrame(
+            preprocessing_artifacts.static_scaler.transform(self.static_df[CONFIG['static_numerical_cols']]),
+            columns=CONFIG['static_numerical_cols'],
+            index=self.static_df.index,
+        )
+        self.static_df[CONFIG['static_numerical_cols']] = static_scaled
+
+        # Track real observed values before replacing missing entries with the padding sentinel.
+        self.ts_data_value_mask = self.ts_data[['patient_id', 'rel_days']].copy()
+        self.ts_data_value_mask[CONFIG['ts_features']] = (~self.ts_data[CONFIG['ts_features']].isna()).astype(int)
+
+        ts_scaled = pd.DataFrame(
+            preprocessing_artifacts.ts_scaler.transform(self.ts_data[CONFIG['ts_features']]),
+            columns=CONFIG['ts_features'],
+            index=self.ts_data.index,
+        )
+        self.ts_data[CONFIG['ts_features']] = ts_scaled.fillna(CONFIG['PADDING_VAL'])
 
     def __len__(self):
         return len(self.patient_ids)
@@ -579,11 +913,13 @@ class NephroCAGEDataset(Dataset):
         # Handle notes embeddings and timesteps
         notes_rows = self.notes_df[self.notes_df['patient_id'] == patient_id]
         notes_timesteps = torch.tensor(notes_rows['rel_days'].values.astype(np.int64))
-        if 'embeddings' in self.notes_df.columns and not notes_rows.empty:
-            notes_embeddings = torch.tensor(np.stack(notes_rows['embeddings'].values), dtype=torch.float32)
+        if 'embeddings' in self.notes_df.columns:
+            if notes_rows.empty:
+                notes_embeddings = torch.empty((0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+            else:
+                notes_embeddings = torch.tensor(np.stack(notes_rows['embeddings'].values), dtype=torch.float32)
         else:
-            # Return an empty embedding of shape (0, embedding_dim)
-            notes_embeddings = None  # Set to None if embeddings are not available
+            notes_embeddings = None
 
         # get labels
         labels = self.labels[self.labels['patient_id'] == patient_id]
@@ -622,14 +958,27 @@ def collate_fn(batch):
 
     # Collect sequence lengths
     seq_lengths = torch.tensor([item['seq_len'] for item in batch], dtype=torch.long)
-    # Check if notes embeddings are available in the batch
-    has_notes = True
-    if batch[0]['notes_embeddings'] is None:
-        has_notes = False
+    # Check if note embeddings are available anywhere in the batch. When the
+    # embeddings column exists, patients without notes contribute empty tensors.
+    has_notes = any(item['notes_embeddings'] is not None for item in batch)
     if has_notes:
-        notes_lengths = torch.tensor([item['notes_embeddings'].shape[0] for item in batch], dtype=torch.long)
+        notes_emb_list = [
+            item['notes_embeddings']
+            if item['notes_embeddings'] is not None
+            else torch.empty((0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+            for item in batch
+        ]
+        notes_timesteps_list = [
+            item['notes_timesteps']
+            if item['notes_embeddings'] is not None
+            else torch.empty((0,), dtype=torch.long)
+            for item in batch
+        ]
+        notes_lengths = torch.tensor([item.shape[0] for item in notes_emb_list], dtype=torch.long)
         max_notes_len = notes_lengths.max().item()
     else:
+        notes_emb_list = None
+        notes_timesteps_list = None
         notes_lengths = None
         max_notes_len = None
 
@@ -643,10 +992,16 @@ def collate_fn(batch):
             # Pad 'ts_features', 'timsteps', and 'value_mask' to make all sequences the same length
             padding_value = CONFIG['PADDING_VAL'] if key != 'value_mask' else 0
             collated_batch[key] = pad_sequence(data, batch_first=True, padding_value=padding_value)
-        elif key == 'notes_embeddings' or key == 'notes_timesteps':
-            # Pad notes embeddings and timesteps
+        elif key == 'notes_embeddings':
             if has_notes:
-                collated_batch[key] = pad_sequence(data, batch_first=True, padding_value=0)
+                collated_batch[key] = pad_sequence(notes_emb_list, batch_first=True, padding_value=0)
+            else:
+                collated_batch[key] = None
+        elif key == 'notes_timesteps':
+            if has_notes:
+                collated_batch[key] = pad_sequence(notes_timesteps_list, batch_first=True, padding_value=0)
+            else:
+                collated_batch[key] = None
         elif key == 'seq_len':
             # Already collected sequence lengths
             collated_batch[key] = seq_lengths
@@ -667,6 +1022,8 @@ def collate_fn(batch):
         notes_mask = torch.arange(max_notes_len).expand(batch_size, max_notes_len) < notes_lengths.unsqueeze(1)
         collated_batch['notes_mask'] = notes_mask  # Shape: (batch_size, max_notes_len)
     else:
-        collated_batch['notes_mask'] = None
+        collated_batch['notes_embeddings'] = torch.empty((batch_size, 0, CONFIG['notes_embedding_dim']), dtype=torch.float32)
+        collated_batch['notes_timesteps'] = torch.empty((batch_size, 0), dtype=torch.long)
+        collated_batch['notes_mask'] = torch.zeros((batch_size, 0), dtype=torch.bool)
 
     return collated_batch
